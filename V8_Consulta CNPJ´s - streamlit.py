@@ -5,7 +5,6 @@ import time
 import re
 import os
 import datetime
-import tkinter as tk
 from tkinter import filedialog
 
 # 1. Configuração da Página
