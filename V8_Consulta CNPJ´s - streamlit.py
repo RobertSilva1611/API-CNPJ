@@ -186,7 +186,6 @@ with col2:
 if btn_disparar:
     st.session_state.rodando = True
     st.session_state.logs = ["🚀 Processamento iniciado..."]
-    st.rerun()
 
 # --- LÓGICA DE PROCESSAMENTO EM BACKGROUND ---
 if st.session_state.rodando:
