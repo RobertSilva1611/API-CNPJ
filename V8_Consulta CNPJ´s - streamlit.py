@@ -105,12 +105,12 @@ aba_selecionada = None
 coluna_selecionada = None
 df_entrada = None
 
-if arquivo_carregado:
+if arquivo_carregado is not None:
     try:
         excel_file = pd.ExcelFile(arquivo_carregado)
         aba_selecionada = st.sidebar.selectbox("Em qual ABA estão os dados?", excel_file.sheet_names)
         
-        if aba_selecionada:
+        if aba_selecionada is not None:
             df_entrada = pd.read_excel(arquivo_carregado, sheet_name=aba_selecionada)
             coluna_selecionada = st.sidebar.selectbox("Qual COLUNA possui os CNPJs?", df_entrada.columns)
     except Exception as e:
@@ -178,7 +178,12 @@ log_placeholder = tab_logs.empty()
 # Botões de Ação
 col1, col2 = st.columns([1, 4])
 # Só libera o botão INICIAR se o usuário selecionou o arquivo, a aba, a coluna e A PASTA DESTINO.
-disponivel_para_rodar = arquivo_carregado and aba_selecionada and coluna_selecionada
+disponivel_para_rodar = (
+    arquivo_carregado is not None
+    and aba_selecionada is not None
+    and coluna_selecionada is not None
+    and df_entrada is not None
+)
 
 with col1:
     btn_disparar = st.button("▶️ Iniciar Processamento", disabled=not disponivel_para_rodar or st.session_state.rodando, use_container_width=True)
