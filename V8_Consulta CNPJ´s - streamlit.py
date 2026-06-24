@@ -5,7 +5,7 @@ import time
 import re
 import os
 import datetime
-from tkinter import filedialog
+
 
 # 1. Configuração da Página
 st.set_page_config(
