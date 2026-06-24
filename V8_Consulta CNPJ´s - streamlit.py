@@ -28,16 +28,6 @@ if "pasta_destino" not in st.session_state:
 # Nome do arquivo de backup interno
 ARQUIVO_BACKUP = "backup_interno_cnpj.xlsx"
 
-# --- TRUQUE SÊNIOR: ABRIR O EXPLORADOR DO WINDOWS ---
-def abrir_explorador_windows():
-    """Abre a janela nativa do Windows para escolher a pasta."""
-    root = tk.Tk()
-    root.withdraw() # Esconde a janela principal do Tkinter
-    root.wm_attributes('-topmost', 1) # Força a janela do explorador a ficar na FRENTE do navegador
-    pasta_escolhida = filedialog.askdirectory(master=root, title="Selecione a pasta para salvar a planilha")
-    root.destroy()
-    return pasta_escolhida
-
 # --- HELPERS DE TRATAMENTO DE DADOS ---
 def limpar_cnpj(cnpj):
     so_numeros = re.sub(r'\D', '', str(cnpj))
