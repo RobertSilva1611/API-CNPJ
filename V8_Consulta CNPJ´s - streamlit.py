@@ -5,28 +5,28 @@ import time
 import re
 import os
 import uuid
+import unicodedata
 from io import BytesIO
 from fpdf import FPDF
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Consulta CNPJ",
-    page_icon="enterprise.png",
+    page_title="CNPJ Enterprise Analytics",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # --- ISOLAMENTO DE SESSÃO (Evita conflito entre usuários) ---
 if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())[:8] # Cria um ID único para o usuário atual
+    st.session_state.session_id = str(uuid.uuid4())[:8]
 
 if "rodando" not in st.session_state: st.session_state.rodando = False
 if "logs" not in st.session_state: st.session_state.logs = []
 
-# O arquivo agora é único para quem está acessando
 ARQUIVO_SAIDA = f"RESULTADOS_LOTE_{st.session_state.session_id}.xlsx"
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES AUXILIARES E TRATAMENTO DE DADOS ---
 def limpar_cnpj(cnpj):
     so_numeros = re.sub(r'\D', '', str(cnpj))
     return so_numeros.zfill(14) if len(so_numeros) > 0 else ""
@@ -43,22 +43,65 @@ def formatar_eta(segundos):
     minutos, segs = divmod(resto, 60)
     return f"{int(horas):02d}h {int(minutos):02d}m {int(segs):02d}s"
 
+def normalizar_texto(texto):
+    """Converte para maiúsculo, remove acentos e caracteres especiais."""
+    if not texto: return ""
+    texto = str(texto).upper()
+    # Remove acentos
+    texto = ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+    # Remove caracteres especiais (deixa apenas letras, números e espaços)
+    texto = re.sub(r'[^A-Z0-9\s]', ' ', texto)
+    # Limpa espaços duplos
+    texto = re.sub(r'\s+', ' ', texto).strip()
+    return texto
+
 def extrair_dados_json(dados):
     estab = dados.get('estabelecimento', {})
     socios = " \n".join([f"- {s.get('nome')} | Doc: {s.get('cpf_cnpj_socio')} | Qualificação: {_get(s, 'qualificacao_socio', 'descricao')}" for s in dados.get('socios', [])])
     secundarias = " \n".join([f"- {act.get('subclasse')} - {act.get('descricao')}" for act in estab.get('atividades_secundarias', [])])
     
+    # Tratamento de Nome Fantasia
+    nome_fantasia_norm = normalizar_texto(_get(estab, 'nome_fantasia'))
+
+    # Tratamento de Endereço (Tipo + Nome Normalizados)
+    tipo_logradouro = _get(estab, 'tipo_logradouro')
+    nome_logradouro = _get(estab, 'logradouro')
+    logradouro_completo = normalizar_texto(f"{tipo_logradouro} {nome_logradouro}")
+    
+    numero_norm = normalizar_texto(_get(estab, 'numero'))
+    endereco_completo = f"{logradouro_completo} {numero_norm}".strip()
+    
+    bairro_norm = normalizar_texto(_get(estab, 'bairro'))
+    cidade_norm = normalizar_texto(_get(estab, 'cidade', 'nome'))
+    complemento_norm = normalizar_texto(_get(estab, 'complemento'))
+    
     linha = {
-        "CNPJ Raiz": _get(dados, 'cnpj_raiz'), "Razão Social": _get(dados, 'razao_social'),
-        "Capital Social": _get(dados, 'capital_social'), "Responsável Federativo": _get(dados, 'responsavel_federativo'),
-        "Atualizado Em (Geral)": _get(dados, 'atualizado_em'), "Porte Descrição": _get(dados, 'porte', 'descricao'), 
-        "Natureza Jurídica Descrição": _get(dados, 'natureza_juridica', 'descricao'), "Simples Nacional / MEI": _get(dados, 'simples'),
-        "CNPJ Completo": _get(estab, 'cnpj'), "Situação Cadastral": _get(estab, 'situacao_cadastral'),
-        "Data Situação Cadastral": _get(estab, 'data_situacao_cadastral'), "Data Início Atividade": _get(estab, 'data_inicio_atividade'),
-        "Logradouro": _get(estab, 'logradouro'), "Número": _get(estab, 'numero'), "Bairro": _get(estab, 'bairro'),
-        "CEP": _get(estab, 'cep'), "Telefone": _get(estab, 'telefone1'), "E-mail": _get(estab, 'email'), 
-        "Atividade Principal": _get(estab, 'atividade_principal', 'descricao'), "Estado (UF)": _get(estab, 'estado', 'sigla'), 
-        "Cidade": _get(estab, 'cidade', 'nome'), "Atividades Secundárias": secundarias, "Quadro de Sócios": socios
+        "CNPJ Raiz": _get(dados, 'cnpj_raiz'), 
+        "Razão Social": _get(dados, 'razao_social'),
+        "Nome Fantasia": nome_fantasia_norm,
+        "Capital Social": _get(dados, 'capital_social'), 
+        "Responsável Federativo": _get(dados, 'responsavel_federativo'),
+        "Atualizado Em (Geral)": _get(dados, 'atualizado_em'), 
+        "Porte Descrição": _get(dados, 'porte', 'descricao'), 
+        "Natureza Jurídica Descrição": _get(dados, 'natureza_juridica', 'descricao'), 
+        "Simples Nacional / MEI": _get(dados, 'simples'),
+        "CNPJ Completo": _get(estab, 'cnpj'), 
+        "Situação Cadastral": _get(estab, 'situacao_cadastral'),
+        "Data Situação Cadastral": _get(estab, 'data_situacao_cadastral'), 
+        "Data Início Atividade": _get(estab, 'data_inicio_atividade'),
+        "Endereço Completo": endereco_completo,
+        "Logradouro": logradouro_completo, 
+        "Número": numero_norm, 
+        "Complemento": complemento_norm, 
+        "Bairro": bairro_norm, 
+        "Cidade": cidade_norm, 
+        "Estado (UF)": _get(estab, 'estado', 'sigla'), 
+        "CEP": _get(estab, 'cep'), 
+        "Telefone": _get(estab, 'telefone1'), 
+        "E-mail": _get(estab, 'email'), 
+        "Atividade Principal": _get(estab, 'atividade_principal', 'descricao'), 
+        "Atividades Secundárias": secundarias, 
+        "Quadro de Sócios": socios
     }
 
     uf_sede = _get(estab, 'estado', 'sigla')
@@ -106,13 +149,13 @@ def gerar_pdf_cnpj(dados):
         pdf.set_font("helvetica", "B", 8)
         pdf.cell(0, 5, title.upper(), new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("helvetica", "", 10)
-        # Proteção contra caracteres especiais no PDF
         safe_content = str(content).encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 5, safe_content, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
     add_box("NÚMERO DE INSCRIÇÃO", dados.get('CNPJ Completo', ''))
     add_box("NOME EMPRESARIAL", dados.get('Razão Social', ''))
+    add_box("NOME FANTASIA", dados.get('Nome Fantasia', ''))
     add_box("PORTE", dados.get('Porte Descrição', ''))
     
     add_box("INSCRIÇÕES ESTADUAIS (ATIVAS)", dados.get('IEs Consolidadas', 'ISENTO'))
@@ -121,8 +164,9 @@ def gerar_pdf_cnpj(dados):
     add_box("CÓDIGO E DESCRIÇÃO DA NATUREZA JURÍDICA", dados.get('Natureza Jurídica Descrição', ''))
     add_box("QUADRO DE SÓCIOS E ADMINISTRADORES (QSA)", dados.get('Quadro de Sócios', ''))
     
-    end = f"{dados.get('Logradouro', '')}, {dados.get('Número', '')} - {dados.get('Bairro', '')}, {dados.get('Cidade', '')}/{dados.get('Estado (UF)', '')} - CEP: {dados.get('CEP', '')}"
-    add_box("ENDEREÇO", end)
+    comp = f" - {dados.get('Complemento')}" if dados.get('Complemento') else ""
+    end = f"{dados.get('Endereço Completo', '')}{comp} - {dados.get('Bairro', '')}, {dados.get('Cidade', '')}/{dados.get('Estado (UF)', '')} - CEP: {dados.get('CEP', '')}"
+    add_box("ENDEREÇO COMPLETO", end)
     add_box("TELEFONE / E-MAIL", f"{dados.get('Telefone', '')}  /  {dados.get('E-mail', '')}")
     add_box("SITUAÇÃO CADASTRAL", f"{dados.get('Situação Cadastral', '')} ({dados.get('Data Situação Cadastral', '')})")
 
@@ -157,6 +201,10 @@ if modo_app == "📇 Consulta Única (Cartão)":
                         # --- RENDERIZA O PAINEL VISUAL ---
                         with st.container(border=True):
                             st.subheader(f"🏢 {dados_empresa['Razão Social']}")
+                            
+                            if dados_empresa.get("Nome Fantasia"):
+                                st.markdown(f"🌟 **Nome Fantasia:** {dados_empresa['Nome Fantasia']}")
+                                
                             st.write(f"**CNPJ:** {dados_empresa['CNPJ Completo']} | **Situação:** {dados_empresa['Situação Cadastral']} ({dados_empresa['Data Situação Cadastral']})")
                             st.markdown("---")
                             
@@ -169,7 +217,6 @@ if modo_app == "📇 Consulta Única (Cartão)":
                             st.markdown(f"**Inscrições Estaduais Ativas:** {dados_empresa.get('IEs Consolidadas', 'ISENTO')}")
                             st.markdown(f"**Atividade Principal:** {dados_empresa['Atividade Principal']}")
                             
-                            # Caixas Expansíveis (Acordeões) para não poluir a tela
                             with st.expander("Ver Atividades Secundárias (CNAE)"):
                                 atividades = dados_empresa.get('Atividades Secundárias', '')
                                 st.text(atividades if atividades else "Nenhuma atividade secundária registrada.")
@@ -179,11 +226,12 @@ if modo_app == "📇 Consulta Única (Cartão)":
                                 st.text(socios if socios else "Nenhum sócio registrado.")
 
                             st.markdown("---")
-                            st.markdown(f"📍 **Endereço:** {dados_empresa['Logradouro']}, {dados_empresa['Número']} - {dados_empresa['Bairro']}, {dados_empresa['Cidade']}/{dados_empresa['Estado (UF)']} - CEP: {dados_empresa['CEP']}")
+                            comp = f" - {dados_empresa.get('Complemento')}" if dados_empresa.get('Complemento') else ""
+                            st.markdown(f"📍 **Endereço Completo:** {dados_empresa['Endereço Completo']}{comp} - {dados_empresa['Bairro']}, {dados_empresa['Cidade']}/{dados_empresa['Estado (UF)']} - CEP: {dados_empresa['CEP']}")
                             st.markdown(f"📞 **Contato:** {dados_empresa['Telefone']} | ✉️ {dados_empresa['E-mail']}")
                             
                             st.markdown("---")
-                            # BOTÕES DE DOWNLOAD (Excel e PDF Lado a Lado)
+                            # BOTÕES DE DOWNLOAD
                             d_col1, d_col2 = st.columns(2)
                             
                             # Excel
@@ -237,38 +285,34 @@ elif modo_app == "🗂️ Consulta em Lote (Excel)":
         except Exception as e:
             st.sidebar.error(f"Erro ao carregar arquivo: {e}")
 
-    # Lógica do Botão de Download na Sidebar (Seguro e Isolado)
+    # Lógica do Botão de Download na Sidebar
     st.sidebar.markdown("---")
     st.sidebar.subheader("💾 Progresso Salvo")
     if os.path.exists(ARQUIVO_SAIDA):
         with open(ARQUIVO_SAIDA, "rb") as f:
             st.sidebar.download_button("📥 Baixar Planilha Consolidada", f, file_name="LOTE_FINAL_CNPJ.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
 
-    # --- O truque do Botão que Some ---
-    area_botoes = st.empty() # Container reservado para o botão sumir magicamente
+    area_botoes = st.empty() 
     
     if not st.session_state.rodando:
         disponivel = (arquivo_carregado is not None and df_entrada is not None)
         if area_botoes.button("▶️ Iniciar Processamento", disabled=not disponivel, use_container_width=True):
             st.session_state.rodando = True
             st.session_state.logs = ["🚀 Processamento iniciado..."]
-            area_botoes.empty() # Oculta o botão instantaneamente
+            area_botoes.empty() 
             st.rerun()
     else:
-        # Se estiver rodando, exibe a opção de Pausa/Stop no lugar do botão iniciar
         col_pause, col_aviso = area_botoes.columns([1, 4])
         if col_pause.button("⏸ Interromper", type="primary"):
             st.session_state.rodando = False
             st.rerun()
         col_aviso.warning("⏳ Processamento em andamento. Não atualize a página!")
 
-    # --- LÓGICA DE PROCESSAMENTO ---
     if st.session_state.rodando:
         lista_bruta = df_entrada[coluna_selecionada].dropna().tolist()
         resultados_atuais = []
         cnpjs_processados = set()
 
-        # Anti-queda ISOLADO POR SESSÃO
         if os.path.exists(ARQUIVO_SAIDA):
             try:
                 df_existente = pd.read_excel(ARQUIVO_SAIDA)
@@ -341,7 +385,6 @@ elif modo_app == "🗂️ Consulta em Lote (Excel)":
                     if status_erro != "Inexistente":
                         resultados_atuais.append({"CNPJ Completo": cnpj, "Razão Social": f"FALHA ({status_erro})", "Situação Cadastral": "ERRO"})
 
-                # ATUALIZA A TELA (DASHBOARD)
                 proc_agora = index + 1
                 t_decorrido = max(time.time() - t_inicio_global, 1)
                 req_min = proc_agora / (t_decorrido / 60)
@@ -361,7 +404,6 @@ elif modo_app == "🗂️ Consulta em Lote (Excel)":
                 if not df_preview.empty and "Razão Social" in df_preview.columns:
                     preview_placeholder.dataframe(df_preview[["CNPJ Completo", "Razão Social", "Situação Cadastral"]], use_container_width=True)
 
-                # SALVA FISICAMENTE A CADA 5 (Proteção garantida isolada por usuário)
                 if sucesso_req and (index % 5 == 0 or index == total - 1):
                     try: pd.DataFrame(resultados_atuais).to_excel(ARQUIVO_SAIDA, index=False)
                     except: pass
