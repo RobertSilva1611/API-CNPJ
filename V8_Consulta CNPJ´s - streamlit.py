@@ -5,8 +5,6 @@ import time
 import re
 import os
 import datetime
-import tkinter as tk
-from tkinter import filedialog
 
 # 1. Configuração da Página
 st.set_page_config(
@@ -23,21 +21,9 @@ if "resultados" not in st.session_state:
     st.session_state.resultados = []
 if "logs" not in st.session_state:
     st.session_state.logs = []
-if "pasta_destino" not in st.session_state:
-    st.session_state.pasta_destino = "" # Começa vazio até o usuário escolher
 
-# Nome do arquivo de backup interno
-ARQUIVO_BACKUP = "backup_interno_cnpj.xlsx"
-
-# --- TRUQUE SÊNIOR: ABRIR O EXPLORADOR DO WINDOWS ---
-def abrir_explorador_windows():
-    """Abre a janela nativa do Windows para escolher a pasta."""
-    root = tk.Tk()
-    root.withdraw() # Esconde a janela principal do Tkinter
-    root.wm_attributes('-topmost', 1) # Força a janela do explorador a ficar na FRENTE do navegador
-    pasta_escolhida = filedialog.askdirectory(master=root, title="Selecione a pasta para salvar a planilha")
-    root.destroy()
-    return pasta_escolhida
+# Nome do arquivo interno gerado no servidor
+ARQUIVO_BACKUP = "RESULTADOS_CNPJ.xlsx"
 
 # --- HELPERS DE TRATAMENTO DE DADOS ---
 def limpar_cnpj(cnpj):
@@ -106,46 +92,29 @@ aba_selecionada = None
 coluna_selecionada = None
 df_entrada = None
 
-if arquivo_carregado:
+if arquivo_carregado is not None:
     try:
         excel_file = pd.ExcelFile(arquivo_carregado)
         aba_selecionada = st.sidebar.selectbox("Em qual ABA estão os dados?", excel_file.sheet_names)
         
-        if aba_selecionada:
+        if aba_selecionada is not None:
             df_entrada = pd.read_excel(arquivo_carregado, sheet_name=aba_selecionada)
             coluna_selecionada = st.sidebar.selectbox("Qual COLUNA possui os CNPJs?", df_entrada.columns)
     except Exception as e:
         st.sidebar.error(f"Erro ao ler o arquivo: {e}")
 
 st.sidebar.markdown("---")
-st.sidebar.title("💾 Destino dos Resultados")
+st.sidebar.title("💾 Download dos Resultados")
+st.sidebar.info("Ao finalizar ou pausar o processamento, clique no botão abaixo para baixar a planilha no seu computador.")
 
-# Botão para abrir o explorador do Windows
-if st.sidebar.button("📁 Escolher Pasta de Destino", use_container_width=True):
-    pasta = abrir_explorador_windows()
-    if pasta:
-        st.session_state.pasta_destino = os.path.normpath(pasta)
-        st.rerun()
-
-# Mostra a pasta escolhida e o nome do arquivo
-if st.session_state.pasta_destino != "":
-    st.sidebar.success(f"**Pasta Selecionada:**\n{st.session_state.pasta_destino}")
-else:
-    st.sidebar.warning("⚠️ Nenhuma pasta selecionada.")
-
-nome_arquivo_saida = st.sidebar.text_input("Nome do arquivo de saída", value="RESULTADOS_CNPJ.xlsx")
-caminho_final_salvamento = os.path.join(st.session_state.pasta_destino, nome_arquivo_saida) if st.session_state.pasta_destino else ARQUIVO_BACKUP
-
-
-st.sidebar.markdown("---")
-# Botão de Download Alternativo
-if os.path.exists(caminho_final_salvamento):
-    with open(caminho_final_salvamento, "rb") as f:
+# Botão de Download Dinâmico Integrado ao Navegador
+if os.path.exists(ARQUIVO_BACKUP):
+    with open(ARQUIVO_BACKUP, "rb") as f:
         bytes_excel = f.read()
     st.sidebar.download_button(
-        label="📥 Baixar Planilha",
+        label="📥 Baixar Planilha Consolidada",
         data=bytes_excel,
-        file_name=nome_arquivo_saida,
+        file_name="RESULTADOS_CNPJ_ATUALIZADO.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
     )
@@ -175,8 +144,7 @@ log_placeholder = tab_logs.empty()
 
 # Botões de Ação
 col1, col2 = st.columns([1, 4])
-# Só libera o botão INICIAR se o usuário selecionou o arquivo, a aba, a coluna e A PASTA DESTINO.
-disponivel_para_rodar = arquivo_carregado and aba_selecionada and coluna_selecionada and st.session_state.pasta_destino != ""
+disponivel_para_rodar = (arquivo_carregado is not None and df_entrada is not None)
 
 with col1:
     btn_disparar = st.button("▶️ Iniciar Processamento", disabled=not disponivel_para_rodar or st.session_state.rodando, use_container_width=True)
@@ -189,22 +157,26 @@ with col2:
 if btn_disparar:
     st.session_state.rodando = True
     st.session_state.logs = ["🚀 Processamento iniciado..."]
-    st.rerun()
 
 # --- LÓGICA DE PROCESSAMENTO EM BACKGROUND ---
 if st.session_state.rodando:
+
+    if coluna_selecionada is None:
+        st.error("Selecione a coluna contendo os CNPJs.")
+        st.stop()
+
     lista_bruta = df_entrada[coluna_selecionada].dropna().tolist()
     cnpjs_processados = set()
     resultados_atuais = []
 
-    # Recupera o progresso do arquivo na pasta de destino (Anti-queda)
-    if os.path.exists(caminho_final_salvamento):
+    # Recupera o progresso do arquivo no servidor nuvem (Anti-queda)
+    if os.path.exists(ARQUIVO_BACKUP):
         try:
-            df_existente = pd.read_excel(caminho_final_salvamento)
+            df_existente = pd.read_excel(ARQUIVO_BACKUP)
             resultados_atuais = df_existente.to_dict('records')
             if 'CNPJ Completo' in df_existente.columns:
                 cnpjs_processados.update([limpar_cnpj(c) for c in df_existente['CNPJ Completo'].dropna()])
-            st.session_state.logs.append(f"🔄 Arquivo existente detectado na pasta. {len(cnpjs_processados)} CNPJs já estão prontos.")
+            st.session_state.logs.append(f"🔄 Retomando: {len(cnpjs_processados)} CNPJs já estão prontos no servidor.")
         except:
             pass
 
@@ -212,7 +184,7 @@ if st.session_state.rodando:
     total = len(cnpjs_pendentes)
 
     if total == 0:
-        st.success("✅ Todos os CNPJs já foram processados!")
+        st.success("✅ Todos os CNPJs já foram processados! Clique no botão de download na barra lateral.")
         st.session_state.rodando = False
         st.rerun()
     else:
@@ -245,7 +217,7 @@ if st.session_state.rodando:
                         break
                     elif res.status_code == 429:
                         r_after = int(res.headers.get("Retry-After", 25))
-                        st.session_state.logs.append(f"⚠️ Limite (429). Aguardando {r_after}s...")
+                        st.session_state.logs.append(f"⚠️ Limite da API (429). Aguardando {r_after}s...")
                         time.sleep(r_after)
                     else:
                         status_erro = f"HTTP {res.status_code}"
@@ -261,7 +233,7 @@ if st.session_state.rodando:
                     linha_erro = {"CNPJ Completo": cnpj, "Razão Social": f"FALHA ({status_erro})", "Situação Cadastral": "ERRO"}
                     resultados_atuais.append(linha_erro)
 
-            # Atualiza Tela
+            # Atualiza a Tela de Métricas
             processados_agora = index + 1
             t_decorrido = max(time.time() - t_inicio_global, 1)
             req_min = processados_agora / (t_decorrido / 60)
@@ -274,7 +246,7 @@ if st.session_state.rodando:
             metric_t_medio.metric("Tempo Médio ⏱️", f"{t_medio:.1f}s")
 
             progress_placeholder.progress(processados_agora / total)
-            eta_placeholder.write(f"**Progresso:** {processados_agora}/{total} | **Tempo Restante:** {formatar_eta(s_restantes)}")
+            eta_placeholder.write(f"**Progresso:** {processados_agora}/{total} | **Tempo Restante (ETA):** {formatar_eta(s_restantes)}")
 
             log_placeholder.text_area("Logs em Tempo Real", value="\n".join(st.session_state.logs[-12:]), height=250)
             
@@ -282,17 +254,17 @@ if st.session_state.rodando:
             if not df_preview.empty and "Razão Social" in df_preview.columns:
                 preview_placeholder.dataframe(df_preview, use_container_width=True)
 
-            # SALVA DIRETAMENTE NA PASTA ESCOLHIDA PELO EXPLORADOR DO WINDOWS
+            # SALVA NO SERVIDOR A CADA 5 (Para alimentar o botão de Download)
             if sucesso_req and (index % 5 == 0 or index == total - 1):
                 try:
-                    pd.DataFrame(resultados_atuais).to_excel(caminho_final_salvamento, index=False)
-                except:
-                    pass
+                    pd.DataFrame(resultados_atuais).to_excel(ARQUIVO_BACKUP, index=False)
+                except Exception as e:
+                    st.session_state.logs.append(f"Erro ao salvar: {e}")
 
-            # Trava para não tomar erro 429
+            # Trava para não tomar bloqueio da Receita
             if index < total - 1:
                 time.sleep(tempo_ciclo_fixo)
 
-        st.success(f"🎉 Processamento concluído! O arquivo foi salvo em: {caminho_final_salvamento}")
+        st.success(f"🎉 Processamento concluído! O botão para baixar a planilha está disponível na barra lateral.")
         st.session_state.rodando = False
         st.rerun()
